@@ -1,18 +1,19 @@
-import re
+import os
 import html
 import logging
+import time
+
+import feedparser
 import requests
 
 from htmldom import htmldom
-from bs4 import BeautifulSoup
 from logging.handlers import RotatingFileHandler
 
-from utils import (MONTHS, ENTRIES,
-                   parse_infected_info,
-                   parse_date,
+from utils import (parse_infected_info,
                    parse_confirmed_total,
-                   record_exist, store_data)
+                   store_data)
 
+DUMP_DIRECTORY = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'fechas')
 PARSER = 'lxml'
 try:
     import lxml
@@ -22,39 +23,39 @@ except ImportError:
 logger = logging.getLogger('parser.covid19.cusobucuba.com')
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-fh = RotatingFileHandler('requests.log', mode='a', maxBytes=5 *
-                         1024 * 1024, backupCount=1, encoding=None, delay=0)
+fh = RotatingFileHandler('requests.log', mode='a', maxBytes=5 * 1024 * 1024, backupCount=1, encoding=None, delay=False)
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
 logger.debug('Started Sync')
 
 if __name__ == "__main__":
-    url = 'https://salud.msp.gob.cu/'
+    # url = 'https://salud.msp.gob.cu/'
+    url = 'https://salud.msp.gob.cu/?feed=rss2'
     logger.debug(f'Requesting {url}')
+
+    news_feed = feedparser.parse(url)
+
     session = requests.Session()
     r = session.get(url)
-    if r.status_code == 200:
-        content = r.content.decode(
-            'utf-8').replace('\n', ' ').replace('&nbsp;', ' ')
-        soup = BeautifulSoup(content, PARSER)
-        posts = soup.find_all('article')
-        for post in posts:
-            url = post.find('a')['href']
+    if news_feed:
+        for post in news_feed.entries:
+
             try:
+
+                title = post.title
+                content = post.content[0]['value']
+                date = time.strftime('%Y-%m-%d', post.published_parsed)
+
                 logger.debug(f'Requesting {url}')
-                r = session.get(url)
+                # r = session.get(url)
                 if r.status_code == 200:
                     dom = htmldom.HtmlDom()
-                    dom.createDom(r.content.decode(
-                        'utf-8').replace('\n', ' ').replace('&nbsp;', ' '))
-
-                    title = dom.find('h1.post-title')
-                    content = html.unescape(title.html().replace('\n', ' '))
-                    date = parse_date(content)
+                    dom.createDom(html.unescape(content.replace('\n', ' ')))
 
                     # Si existe el fichero ya el parte se ha registrado
-                    if record_exist(date):
+                    # if record_exist(date):
+                    if os.path.isfile(os.path.join(DUMP_DIRECTORY, f'{date}.json')):
                         logger.debug(f'"{str(date)}.json" exist, continue')
                         continue
 
@@ -71,9 +72,7 @@ if __name__ == "__main__":
                         checker -= 1
                         if checker == 0:
                             break
-                    # print({'day': date, 'total': total, 'new': new, 'persons': persons})
-                    # open(f'{str(date)}.json', 'w').write(str({'day': date, 'total': total, 'new': new, 'persons': persons})
-                    store_data(f'{str(date)}.json', {
+                    store_data(os.path.join(DUMP_DIRECTORY, f'{date}.json'), {
                         'day': date,
                         'total': total,
                         'new': new,
